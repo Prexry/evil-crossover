@@ -33,6 +33,17 @@ if [[ ! "${confirm:-}" =~ ^[Yy]$ ]]; then
   exit 0
 fi
 
+DEFAULT_DAYS=14
+read -r -p "Days remaining to display (1-9999, default ${DEFAULT_DAYS}): " days_input || true
+days_input="${days_input:-${DEFAULT_DAYS}}"
+if [[ "${days_input}" =~ ^[0-9]+$ ]] && [ "${days_input}" -ge 1 ] && [ "${days_input}" -le 9999 ]; then
+  DAYS_REMAINING="${days_input}"
+else
+  echo "Invalid input; using default ${DEFAULT_DAYS}."
+  DAYS_REMAINING="${DEFAULT_DAYS}"
+fi
+echo "Trial banner will show: ${DAYS_REMAINING} days"
+
 APP_BUNDLE="$(cd "${CO_DIR}/../.." && pwd)"
 APP_VERSION="$(defaults read "${APP_BUNDLE}/Contents/Info" CFBundleShortVersionString 2>/dev/null || echo unknown)"
 echo "Detected CrossOver version: ${APP_VERSION}"
@@ -99,14 +110,18 @@ clean_bottles() {
 write_wrapper() {
   local target="${CO_DIR}/CrossOver"
   local tmp="${target}.new"
-  cat > "${tmp}" <<'EOF'
+  cat > "${tmp}" <<EOF
 #!/usr/bin/env bash
+DAYS_REMAINING=${DAYS_REMAINING}
+EOF
+  cat >> "${tmp}" <<'EOF'
 set -euo pipefail
 shopt -s nullglob
 # ================================================
 # ORIGINAL BY santaklouse
 # UPDATE AND EDIT BY PREXRY
 # ================================================
+TRIAL_LENGTH=14
 PROC_NAME='CrossOver'
 CO_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOG_DIR="$HOME/Library/Logs"
@@ -173,12 +188,18 @@ clean_bottles() {
 stop_proc "$$" "${PPID:-0}"
 
 PLIST="$HOME/Library/Preferences/com.codeweavers.CrossOver.plist"
-DATETIME="$(date -u -v -3H '+%Y-%m-%dT%TZ' 2>/dev/null || date -u -d '3 hours ago' '+%Y-%m-%dT%TZ' 2>/dev/null || true)"
-if [ -n "${DATETIME}" ]; then
+OFFSET_DAYS=$(( DAYS_REMAINING - TRIAL_LENGTH ))
+if [ "${OFFSET_DAYS}" -le 0 ]; then
+  FIRSTRUN="$(date -u -v -3H '+%Y-%m-%dT%TZ' 2>/dev/null || date -u -d '3 hours ago' '+%Y-%m-%dT%TZ' 2>/dev/null || true)"
+else
+  FIRSTRUN="$(date -u -v +${OFFSET_DAYS}d '+%Y-%m-%dT%TZ' 2>/dev/null || date -u -d "+${OFFSET_DAYS} days" '+%Y-%m-%dT%TZ' 2>/dev/null || true)"
+fi
+SUCHECK="$(date -u -v -3H '+%Y-%m-%dT%TZ' 2>/dev/null || date -u -d '3 hours ago' '+%Y-%m-%dT%TZ' 2>/dev/null || true)"
+if [ -n "${FIRSTRUN}" ] && [ -n "${SUCHECK}" ]; then
   [ -f "${PLIST}" ] || plutil -create xml1 "${PLIST}" 2>/dev/null || true
-  if plutil -replace FirstRunDate -date "${DATETIME}" "${PLIST}" 2>>"${LOG_FILE}" \
-     && plutil -replace SULastCheckTime -date "${DATETIME}" "${PLIST}" 2>>"${LOG_FILE}"; then
-    /usr/bin/osascript -e "display notification \"trial fixed: date changed to ${DATETIME}\"" >/dev/null 2>&1 || true
+  if plutil -replace FirstRunDate -date "${FIRSTRUN}" "${PLIST}" 2>>"${LOG_FILE}" \
+     && plutil -replace SULastCheckTime -date "${SUCHECK}" "${PLIST}" 2>>"${LOG_FILE}"; then
+    /usr/bin/osascript -e "display notification \"trial fixed: ${DAYS_REMAINING} days remaining\"" >/dev/null 2>&1 || true
   else
     echo "warning: plutil update failed" >>"${LOG_FILE}"
   fi
